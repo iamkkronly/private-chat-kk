@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Private Chat Room</title>
+  <style>
+    body { font-family: sans-serif; padding: 2rem; background: #f4f4f4; }
+    .center { max-width: 400px; margin: auto; background: white; padding: 20px; border-radius: 8px; }
+    input, button { width: 100%; padding: 10px; margin-top: 10px; font-size: 16px; }
+    #chat { display: none; margin-top: 20px; }
+    #messages { height: 200px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <div class="center">
+    <h2>Create or Join Private Chat</h2>
+    <button onclick="generateKey()">Generate Private Key</button>
+    <input type="text" id="privateKeyInput" placeholder="Enter Private Key" />
+    <button onclick="joinRoom()">Join Room</button>
+
+    <div id="chat">
+      <p><strong>Room Key:</strong> <span id="roomKeyLabel"></span></p>
+      <p><strong>Expires in:</strong> <span id="timer"></span></p>
+      <div id="messages"></div>
+      <input type="text" id="chatInput" placeholder="Type message..." />
+      <button onclick="sendMessage()">Send</button>
+    </div>
+  </div>
+
+  <script>
+    let key = '';
+    let countdown;
+    let socket;
+
+    function generateKey() {
+      fetch('/generate-key').then(res => res.json()).then(data => {
+        alert("Your private key: " + data.key);
+        document.getElementById('privateKeyInput').value = data.key;
+      });
+    }
+
+    function joinRoom() {
+      key = document.getElementById('privateKeyInput').value.trim();
+      if (!key) return alert('Enter a valid key.');
+
+      fetch(`/join-room/${key}`).then(res => res.json()).then(data => {
+        if (!data.success) return alert('Invalid or expired key.');
+        
+        document.getElementById('chat').style.display = 'block';
+        document.getElementById('roomKeyLabel').textContent = key;
+        updateTimer(data.expiresAt);
+
+        socket = new EventSource(`/stream/${key}`);
+        socket.onmessage = (e) => {
+          const div = document.createElement('div');
+          div.textContent = e.data;
+          document.getElementById('messages').appendChild(div);
+        };
+      });
+    }
+
+    function sendMessage() {
+      const msg = document.getElementById('chatInput').value.trim();
+      if (!msg) return;
+      fetch('/send-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, message: msg })
+      });
+      document.getElementById('chatInput').value = '';
+    }
+
+    function updateTimer(expireTime) {
+      const end = new Date(expireTime).getTime();
+      countdown = setInterval(() => {
+        const now = Date.now();
+        let left = Math.floor((end - now) / 1000);
+        if (left <= 0) {
+          document.getElementById('timer').textContent = "Expired";
+          clearInterval(countdown);
+          if (socket) socket.close();
+          return;
+        }
+        const h = Math.floor(left / 3600);
+        const m = Math.floor((left % 3600) / 60);
+        const s = left % 60;
+        document.getElementById('timer').textContent = `${h}h ${m}m ${s}s`;
+      }, 1000);
+    }
+  </script>
+</body>
+</html>
