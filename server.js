@@ -6,41 +6,74 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.static(__dirname));
 
-const rooms = {}; // key: { messages: [], expiresAt: Date, clients: [] }
+// In-memory store
+const rooms = {}; // key: { messages: [], users: [], expiresAt, clients: [] }
 
 function cleanExpiredRooms() {
   const now = Date.now();
-  for (let key in rooms) {
-    if (rooms[key].expiresAt < now) {
-      rooms[key].clients.forEach(res => res.end());
+  for (const key in rooms) {
+    const room = rooms[key];
+    if (room.expiresAt < now) {
+      // end all open SSE connections
+      room.clients.forEach(res => res.end());
       delete rooms[key];
+    } else {
+      // delete messages older than 24hrs
+      room.messages = room.messages.filter(msg => now - msg.timestamp < 24 * 3600 * 1000);
     }
   }
 }
-setInterval(cleanExpiredRooms, 1000 * 60); // check every 1 minute
+setInterval(cleanExpiredRooms, 60 * 1000); // every 1 minute
 
+// Create key
 app.get('/generate-key', (req, res) => {
   const key = uuidv4().split('-')[0];
   const expiresAt = Date.now() + 24 * 60 * 60 * 1000;
-  rooms[key] = { messages: [], expiresAt, clients: [] };
+  rooms[key] = {
+    messages: [],
+    users: [],
+    clients: [],
+    expiresAt
+  };
   res.json({ key });
 });
 
+// Join room
 app.get('/join-room/:key', (req, res) => {
-  const room = rooms[req.params.key];
-  if (!room || room.expiresAt < Date.now()) return res.json({ success: false });
-  res.json({ success: true, expiresAt: new Date(room.expiresAt).toISOString() });
+  const key = req.params.key;
+  const room = rooms[key];
+
+  if (!room || room.expiresAt < Date.now()) {
+    return res.json({ success: false });
+  }
+
+  const username = `user${room.users.length + 1}`;
+  room.users.push(username);
+
+  res.json({
+    success: true,
+    username,
+    expiresAt: new Date(room.expiresAt).toISOString(),
+    history: room.messages.map(msg => `${msg.user}: ${msg.message}`)
+  });
 });
 
+// Receive message
 app.post('/send-message', (req, res) => {
-  const { key, message } = req.body;
+  const { key, user, message } = req.body;
   const room = rooms[key];
   if (!room) return res.status(404).end();
-  room.messages.push(message);
-  room.clients.forEach(client => client.write(`data: ${message}\n\n`));
+
+  const entry = { user, message, timestamp: Date.now() };
+  room.messages.push(entry);
+
+  const formatted = `${user}: ${message}`;
+  room.clients.forEach(client => client.write(`data: ${formatted}\n\n`));
+
   res.end();
 });
 
+// SSE message stream
 app.get('/stream/:key', (req, res) => {
   const room = rooms[req.params.key];
   if (!room) return res.status(404).end();
@@ -51,6 +84,7 @@ app.get('/stream/:key', (req, res) => {
     'Connection': 'keep-alive'
   });
 
+  res.write('\n');
   room.clients.push(res);
 
   req.on('close', () => {
@@ -58,4 +92,4 @@ app.get('/stream/:key', (req, res) => {
   });
 });
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`✅ Server running on http://localhost:${PORT}`));
