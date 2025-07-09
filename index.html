@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="="en">
 <head>
   <meta charset="UTF-8">
   <title>Private Chat Room</title>
@@ -8,7 +8,7 @@
     .container { max-width: 500px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
     input, button, textarea { width: 100%; padding: 10px; margin-top: 10px; font-size: 16px; }
     button { cursor: pointer; }
-    #chat { display: none; margin-top: 20px; }
+    #loginBox, #chat { display: none; }
     #messages { height: 200px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; background: #fafafa; margin-top: 10px; }
   </style>
 </head>
@@ -17,7 +17,14 @@
     <h2>🔒 Private Chat Room</h2>
     <button onclick="generateKey()">Generate Private Key</button>
     <input type="text" id="privateKeyInput" placeholder="Enter Private Key to Join" />
-    <button onclick="joinRoom()">Join Room</button>
+    <button onclick="verifyRoom()">Join Room</button>
+
+    <div id="loginBox">
+      <h3>Login to Chat Room</h3>
+      <input type="text" id="loginUsername" placeholder="Enter Username" />
+      <input type="password" id="loginPassword" placeholder="Enter Password" />
+      <button onclick="joinRoom()">Enter Room</button>
+    </div>
 
     <div id="chat">
       <p><strong>Room Key:</strong> <span id="roomKeyLabel"></span></p>
@@ -43,7 +50,7 @@
         });
     }
 
-    function joinRoom() {
+    function verifyRoom() {
       key = document.getElementById('privateKeyInput').value.trim();
       if (!key) return alert('Enter a valid private key.');
 
@@ -51,13 +58,30 @@
         .then(res => res.json())
         .then(data => {
           if (!data.success) return alert('Invalid or expired key.');
+          document.getElementById('loginBox').style.display = 'block';
+        });
+    }
 
-          username = data.username;
-          document.getElementById('roomKeyLabel').textContent = key;
+    function joinRoom() {
+      const user = document.getElementById('loginUsername').value.trim();
+      const pass = document.getElementById('loginPassword').value.trim();
+      if (!user || !pass) return alert('Enter both username and password.');
+
+      fetch(`/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, username: user, password: pass })
+      })
+        .then(res => res.json())
+        .then(data => {
+          if (!data.success) return alert('Login failed.');
+          username = user;
+
           document.getElementById('chat').style.display = 'block';
+          document.getElementById('loginBox').style.display = 'none';
+          document.getElementById('roomKeyLabel').textContent = key;
           updateTimer(data.expiresAt);
 
-          // show message history
           const msgBox = document.getElementById('messages');
           msgBox.innerHTML = '';
           data.history.forEach(line => {
@@ -66,7 +90,6 @@
             msgBox.appendChild(div);
           });
 
-          // SSE for live updates
           socket = new EventSource(`/stream/${key}`);
           socket.onmessage = (e) => {
             const div = document.createElement('div');
