@@ -6,59 +6,54 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.static(__dirname));
 
-// In-memory store
-const rooms = {}; // key: { messages: [], users: [], expiresAt, clients: [] }
+const rooms = {}; // key: { messages: [], users: [], clients: [], expiresAt }
 
 function cleanExpiredRooms() {
   const now = Date.now();
   for (const key in rooms) {
     const room = rooms[key];
     if (room.expiresAt < now) {
-      // end all open SSE connections
       room.clients.forEach(res => res.end());
       delete rooms[key];
     } else {
-      // delete messages older than 24hrs
       room.messages = room.messages.filter(msg => now - msg.timestamp < 24 * 3600 * 1000);
     }
   }
 }
-setInterval(cleanExpiredRooms, 60 * 1000); // every 1 minute
+setInterval(cleanExpiredRooms, 60 * 1000);
 
-// Create key
 app.get('/generate-key', (req, res) => {
   const key = uuidv4().split('-')[0];
   const expiresAt = Date.now() + 24 * 60 * 60 * 1000;
-  rooms[key] = {
-    messages: [],
-    users: [],
-    clients: [],
-    expiresAt
-  };
+  rooms[key] = { messages: [], users: [], clients: [], expiresAt };
   res.json({ key });
 });
 
-// Join room
 app.get('/join-room/:key', (req, res) => {
   const key = req.params.key;
   const room = rooms[key];
+  if (!room || room.expiresAt < Date.now()) return res.json({ success: false });
 
-  if (!room || room.expiresAt < Date.now()) {
-    return res.json({ success: false });
+  let baseName = req.query.username?.trim() || `user`;
+  let finalName = baseName;
+  let count = 1;
+
+  // ensure username is unique within the room
+  while (room.users.includes(finalName)) {
+    finalName = `${baseName}${count}`;
+    count++;
   }
 
-  const username = `user${room.users.length + 1}`;
-  room.users.push(username);
+  room.users.push(finalName);
 
   res.json({
     success: true,
-    username,
+    username: finalName,
     expiresAt: new Date(room.expiresAt).toISOString(),
     history: room.messages.map(msg => `${msg.user}: ${msg.message}`)
   });
 });
 
-// Receive message
 app.post('/send-message', (req, res) => {
   const { key, user, message } = req.body;
   const room = rooms[key];
@@ -73,7 +68,6 @@ app.post('/send-message', (req, res) => {
   res.end();
 });
 
-// SSE message stream
 app.get('/stream/:key', (req, res) => {
   const room = rooms[req.params.key];
   if (!room) return res.status(404).end();
@@ -92,4 +86,4 @@ app.get('/stream/:key', (req, res) => {
   });
 });
 
-app.listen(PORT, () => console.log(`✅ Server running on http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(`✅ Server running at http://localhost:${PORT}`));
