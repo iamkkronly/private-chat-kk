@@ -6,7 +6,7 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.static(__dirname));
 
-const rooms = {}; // key: { messages: [], users: [], clients: [], expiresAt }
+const rooms = {}; // key: { messages: [], users: [{ username, password }], clients: [], expiresAt }
 
 function cleanExpiredRooms() {
   const now = Date.now();
@@ -33,24 +33,25 @@ app.get('/join-room/:key', (req, res) => {
   const key = req.params.key;
   const room = rooms[key];
   if (!room || room.expiresAt < Date.now()) return res.json({ success: false });
+  res.json({ success: true });
+});
 
-  let baseName = req.query.username?.trim() || `user`;
-  let finalName = baseName;
-  let count = 1;
+app.post('/login', (req, res) => {
+  const { key, username, password } = req.body;
+  const room = rooms[key];
+  if (!room || room.expiresAt < Date.now()) return res.json({ success: false });
 
-  // ensure username is unique within the room
-  while (room.users.includes(finalName)) {
-    finalName = `${baseName}${count}`;
-    count++;
+  const existing = room.users.find(u => u.username === username);
+  if (existing) {
+    if (existing.password !== password) return res.json({ success: false });
+  } else {
+    room.users.push({ username, password });
   }
-
-  room.users.push(finalName);
 
   res.json({
     success: true,
-    username: finalName,
     expiresAt: new Date(room.expiresAt).toISOString(),
-    history: room.messages.map(msg => `${msg.user}: ${msg.message}`)
+    history: room.messages.map(m => `${m.user}: ${m.message}`)
   });
 });
 
@@ -61,7 +62,6 @@ app.post('/send-message', (req, res) => {
 
   const entry = { user, message, timestamp: Date.now() };
   room.messages.push(entry);
-
   const formatted = `${user}: ${message}`;
   room.clients.forEach(client => client.write(`data: ${formatted}\n\n`));
 
@@ -86,4 +86,4 @@ app.get('/stream/:key', (req, res) => {
   });
 });
 
-app.listen(PORT, () => console.log(`✅ Server running at http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(`✅ Server running on http://localhost:${PORT}`));
