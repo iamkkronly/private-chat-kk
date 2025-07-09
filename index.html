@@ -53,7 +53,6 @@
     function verifyRoom() {
       key = document.getElementById('privateKeyInput').value.trim();
       if (!key) return alert('Enter a valid private key.');
-
       fetch(`/join-room/${key}`)
         .then(res => res.json())
         .then(data => {
@@ -96,12 +95,6 @@
             div.textContent = e.data;
             msgBox.appendChild(div);
             msgBox.scrollTop = msgBox.scrollHeight;
-          };
-
-          socket.onerror = () => {
-            socket.close();
-            alert('Connection closed.');
-            location.reload();
           };
         });
     }
