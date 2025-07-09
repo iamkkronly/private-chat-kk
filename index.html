@@ -70,11 +70,7 @@
       fetch(`/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          key,
-          username: user,
-          password: pass
-        })
+        body: JSON.stringify({ key, username: user, password: pass })
       })
         .then(res => res.json())
         .then(data => {
