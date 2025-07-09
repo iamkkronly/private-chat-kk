@@ -74,7 +74,7 @@
       })
         .then(res => res.json())
         .then(data => {
-          if (!data.success) return alert('Login failed.');
+          if (!data.success) return alert(data.message || 'Login failed.');
           username = user;
 
           document.getElementById('chat').style.display = 'block';
@@ -90,12 +90,18 @@
             msgBox.appendChild(div);
           });
 
-          socket = new EventSource(`/stream/${key}`);
+          socket = new EventSource(`/stream/${key}?username=${encodeURIComponent(username)}`);
           socket.onmessage = (e) => {
             const div = document.createElement('div');
             div.textContent = e.data;
             msgBox.appendChild(div);
             msgBox.scrollTop = msgBox.scrollHeight;
+          };
+
+          socket.onerror = () => {
+            socket.close();
+            alert('Connection closed.');
+            location.reload();
           };
         });
     }
